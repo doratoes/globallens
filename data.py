@@ -209,9 +209,6 @@ def refresh_cache(verbose: bool = True) -> None:
         print(f"saved {len(long)} observations to {d}")
 
 
-# --------------------------------------------------------------------------- #
-# Loading
-# --------------------------------------------------------------------------- #
 def _read_long() -> pd.DataFrame:
     d = data_dir()
     if not (d / "worldbank_long.csv").exists():
