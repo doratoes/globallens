@@ -39,23 +39,38 @@ TIER_ORDER = ["Low", "Moderate", "High", "Severe"]
 INCOME_ORDER = ["High income", "Upper middle income", "Lower middle income", "Low income"]
 
 
+NO_GRID = "rgba(0,0,0,0)"
+
+
 def style(fig: go.Figure, title: str | None = None, height: int = 420) -> go.Figure:
+    """Apply the shared look. The chart title is NOT drawn by Plotly: it is stored in
+    `layout.meta` and printed by show() as ordinary Streamlit text above the chart. Plotly
+    titles and legends fight for the same strip of space, and on a narrow screen a wrapping
+    legend ends up on top of the title."""
+    keep_y_grid_off = fig.layout.yaxis.gridcolor == NO_GRID  # set by horizontal bar charts
     fig.update_layout(
-        title=dict(text=title, x=0, font=dict(color=INK, size=15)) if title else None,
+        meta=title,
+        title=None,
         paper_bgcolor=SURFACE, plot_bgcolor=SURFACE, height=height,
         font=dict(family=FONT, color=INK2, size=13),
-        margin=dict(l=12, r=16, t=88 if title else 24, b=12),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(color=INK2)),
+        margin=dict(l=12, r=16, t=16, b=12),
+        # the legend sits just above the plot; if it has to wrap it grows upward into the margin
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    font=dict(color=INK2)),
         hoverlabel=dict(bgcolor=SURFACE, bordercolor=AXIS, font=dict(color=INK, family=FONT)),
     )
     # automargin lets Plotly grow the margin for long tick labels (country names) and axis titles
     for axis in (fig.update_xaxes, fig.update_yaxes):
         axis(gridcolor=GRID, linecolor=AXIS, zerolinecolor=AXIS, tickfont=dict(color=MUTED),
              title_font=dict(color=INK2), automargin=True, title_standoff=12)
+    if keep_y_grid_off:
+        fig.update_yaxes(gridcolor=NO_GRID)
     return fig
 
 
 def show(fig: go.Figure) -> None:
+    if fig.layout.meta:  # chart title, see style()
+        st.markdown(f"**{fig.layout.meta}**")
     st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False})
 
 
@@ -95,9 +110,8 @@ def usd(x: float) -> str:
     return f"${x / 1e6:,.0f}m"
 
 
-# --------------------------------------------------------------------------- #
-# Data (cached)
-# --------------------------------------------------------------------------- #
+#Data (cached)
+ 
 @st.cache_data(show_spinner="Loading World Bank data...")
 def load_data() -> pd.DataFrame:
     return data.load_dataset()
@@ -127,9 +141,8 @@ dim, model = get_dims(), get_model()
 names = df["name"]
 model_set = set(model.iso3)
 
-# --------------------------------------------------------------------------- #
-# Sidebar + header
-# --------------------------------------------------------------------------- #
+#sidebar + header
+
 with st.sidebar:
     st.header("GlobalLens")
     st.caption("Market-entry and trade-shock analytics on World Bank open data.")
@@ -150,9 +163,7 @@ st.caption("Where should a business expand next, and which economies break first
 T_OVER, T_SHOCK, T_MKT, T_COMB, T_METH = st.tabs(
     ["Overview", "Shock simulator", "Market recommender", "Risk-adjusted view", "Method & data"])
 
-# =========================================================================== #
-# SHOCK SIMULATOR
-# =========================================================================== #
+#shock sim
 with T_SHOCK:
     st.subheader("Supply-chain shock simulator")
     st.caption("Pick a scenario, then see how much trade each economy has at risk, as a share of its GDP.")
@@ -195,7 +206,7 @@ with T_SHOCK:
             c[2].metric("Most exposed bystander", names[worst],
                         f"{others.loc[worst, 'trade_at_risk_pct_gdp']:.1f}% of GDP", delta_color="off")
             if home in res.index:
-                c[3].metric(f"{home_name}: trade at risk", f"{res.loc[home, 'trade_at_risk_pct_gdp']:.2f}% of GDP",
+                c[3].metric(f"{home_name}: % of GDP at risk", f"{res.loc[home, 'trade_at_risk_pct_gdp']:.2f}%",
                             f"{res.loc[home, 'tier']} tier", delta_color="off")
             else:
                 c[3].metric(home_name, "n/a", help="Not enough data to model this country.")
@@ -211,8 +222,8 @@ with T_SHOCK:
                        "percentile). Outlined = hit directly. Grey = no data.")
 
     if picked:
-        a, b = st.columns([1.15, 1], gap="large")
-        with a:
+        # chart and table are stacked, not side by side: the table needs the full width to show its numbers
+        with st.container():
             top = res.sort_values("trade_at_risk_pct_gdp", ascending=False).head(12)
             fig = go.Figure()
             for col, label, colour in [("supply_pct_gdp", "Imports lost", BLUE),
@@ -224,18 +235,16 @@ with T_SHOCK:
             fig.update_layout(barmode="stack", bargap=0.45)
             fig.update_yaxes(autorange="reversed", gridcolor="rgba(0,0,0,0)")
             fig.update_xaxes(title="Trade at risk (% of GDP)")
-            show(style(fig, "Most affected economies, by channel", 430))
-        with b:
+            show(style(fig, "Most affected economies, by channel (% of GDP)", 460))
+        with st.container():
             st.markdown("**Full ranking**")
             tbl = res.sort_values("trade_at_risk_pct_gdp", ascending=False)[
                 ["name", "tier", "trade_at_risk_pct_gdp", "main_driver"]]
             tbl.columns = ["Country", "Risk tier", "At risk (% GDP)", "Main driver"]
-            table(tbl, height=430, column_config={
+            table(tbl, height=420, column_config={
                 "At risk (% GDP)": st.column_config.NumberColumn(format="%.2f")})
 
-# =========================================================================== #
-# MARKET RECOMMENDER
-# =========================================================================== #
+#market rec
 with T_MKT:
     st.subheader("Market-entry recommender")
     st.caption("Tell it what you are taking abroad and what matters most. It scores every country, "
@@ -404,7 +413,6 @@ with T_COMB:
         fig.update_yaxes(title="Exposure to the scenario (percentile)", range=[-5, 105])
         show(style(fig, "Opportunity vs exposure (bubble size = GDP)", 500))
 
-        a, b = st.columns(2, gap="large")
         best = comb.head(3)
         exposed = comb[comb["quadrant"] == "Attractive but exposed"].sort_values("score", ascending=False).head(3)
         lines = [f"### Decision brief: {mp}", f"*Scenario: {preset}, {drop}% fall in "
@@ -421,11 +429,11 @@ with T_COMB:
                 lines.append(f"- **{r_['name']}** - opportunity {r_['score']:.0f}, "
                              f"{r_['trade_at_risk_pct_gdp']:.1f}% of GDP at risk ({r_['tier'].lower()}).")
         brief = "\n".join(lines)
-        with a:
-            with st.container(border=True):
-                st.markdown(brief)
-            st.download_button("Download brief (.md)", brief, "globallens_brief.md", "text/markdown")
-        with b:
+        with st.container(border=True):
+            st.markdown(brief)
+        st.download_button("Download brief (.md)", brief, "globallens_brief.md", "text/markdown")
+        with st.container():
+            st.markdown("**Full risk-adjusted ranking**")
             out = comb.reset_index()[["rank_adj", "name", "region", "score", "adjusted", "move", "tier"]]
             out.columns = ["Adj. rank", "Country", "Region", "Opportunity", "Risk-adjusted", "Places gained/lost", "Risk tier"]
             table(out, height=360, column_config={
@@ -434,9 +442,7 @@ with T_COMB:
                 "Adj. rank": st.column_config.NumberColumn(format="%d")})
             st.download_button("Download ranking (.csv)", out.to_csv(index=False), "globallens_ranking.csv", "text/csv")
 
-# =========================================================================== #
-# OVERVIEW
-# =========================================================================== #
+#overview
 with T_OVER:
     st.markdown(
         "GlobalLens joins two questions that businesses usually ask separately: "
@@ -467,9 +473,9 @@ with T_OVER:
     st.info("The scores and exposure figures are relative, screening-level indicators built from open data. "
             "Read the **Method & data** tab before drawing conclusions from them.")
 
-# =========================================================================== #
-# METHOD
-# =========================================================================== #
+#method
+
+
 with T_METH:
     st.subheader("Method, assumptions and limits")
     st.markdown("""
